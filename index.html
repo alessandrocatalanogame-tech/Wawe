@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Wawe</title>
+<meta name="description" content="AI-powered file enhancer"/>
+<meta name="theme-color" content="#080c14"/>
+<link rel="manifest" href="manifest.json"/>
+<link rel="apple-touch-icon" href="public/icons/icon-192.png"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"/>
+
+<link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+
+<!-- SVG DEFS globali per gradienti -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <linearGradient id="waveGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#3b82f6"/>
+      <stop offset="50%"  stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="dzWaveGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#3b82f6"/>
+      <stop offset="50%"  stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<!-- BACKGROUND -->
+<div class="bg">
+  <div class="bg-grid"></div>
+  <div class="bg-blob"></div>
+  <div class="bg-blob"></div>
+  <div class="bg-blob"></div>
+  <!-- wave lines decorative -->
+  <svg class="bg-waves" viewBox="0 0 1440 200" preserveAspectRatio="none" fill="none">
+    <path d="M0 100 Q180 40 360 100 Q540 160 720 100 Q900 40 1080 100 Q1260 160 1440 100" stroke="url(#waveGrad)" stroke-width="2"/>
+    <path d="M0 120 Q180 60 360 120 Q540 180 720 120 Q900 60 1080 120 Q1260 180 1440 120" stroke="url(#waveGrad)" stroke-width="1" opacity=".5"/>
+    <path d="M0 140 Q180 80 360 140 Q540 200 720 140 Q900 80 1080 140 Q1260 200 1440 140" stroke="url(#waveGrad)" stroke-width=".5" opacity=".25"/>
+  </svg>
+  <div class="bg-noise"></div>
+</div>
+
+<div id="root">
+
+  <!-- HEADER -->
+  <header>
+    <div class="logo-wrap">
+      <!-- LOGO ONDA -->
+      <div class="logo-mark">
+        <svg viewBox="0 0 42 42" fill="none">
+          <!-- background circle -->
+          <circle cx="21" cy="21" r="20" fill="rgba(59,130,246,0.08)" stroke="rgba(59,130,246,0.2)" stroke-width="1"/>
+          <!-- tre onde animate -->
+          <path class="logo-wave-bg"  d="M5 21 Q10.5 14 16 21 Q21.5 28 27 21 Q32.5 14 38 21"/>
+          <path class="logo-wave-bg2" d="M5 24 Q10.5 17 16 24 Q21.5 31 27 24 Q32.5 17 38 24"/>
+          <path class="logo-wave-bg3" d="M5 18 Q10.5 11 16 18 Q21.5 25 27 18 Q32.5 11 38 18"/>
+        </svg>
+      </div>
+      <div class="logo-text-wrap">
+        <div class="logo-name">wawe</div>
+        <div class="logo-tagline">ai file enhancer</div>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div class="status-pill">
+        <div class="status-dot"></div>
+        <div class="status-txt" id="status-label">ready</div>
+      </div>
+      <button class="install-btn" id="install-btn">
+        <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2"><path d="M12 16l-4-4h3V4h2v8h3l-4 4z"/><path d="M4 18h16"/></svg>
+        Install
+      </button>
+    </div>
+  </header>
+
+  <!-- DROP ZONE -->
+  <div class="dropzone" id="dropzone">
+    <div class="corner"></div>
+    <div class="corner"></div>
+    <div class="corner"></div>
+    <div class="corner"></div>
+
+    <!-- grande onda SVG animata -->
+    <div class="dz-wave">
+      <svg viewBox="0 0 84 72" fill="none">
+        <path class="dz-wave-path"  d="M6 36 Q18 20 30 36 Q42 52 54 36 Q66 20 78 36"/>
+        <path class="dz-wave-path2" d="M6 44 Q18 28 30 44 Q42 60 54 44 Q66 28 78 44"/>
+        <path class="dz-wave-path3" d="M6 28 Q18 12 30 28 Q42 44 54 28 Q66 12 78 28"/>
+      </svg>
+    </div>
+
+    <div class="dz-h1">Drop files to enhance them</div>
+    <div class="dz-sub">
+      Wawe analizza ogni file con l'AI, rileva problemi e li carica su GoFile generando un link di download.
+    </div>
+
+    <div class="chip-row">
+      <div class="chip">MP4</div><div class="chip">MKV</div><div class="chip">MOV</div>
+      <div class="chip">MP3</div><div class="chip">WAV</div><div class="chip">FLAC</div>
+      <div class="chip">JPG</div><div class="chip">PNG</div><div class="chip">PDF</div>
+      <div class="chip">PPTX</div><div class="chip">DOCX</div><div class="chip">ZIP</div>
+      <div class="chip">RAR</div><div class="chip">M3U</div><div class="chip">7Z</div>
+    </div>
+
+    <button class="btn-browse" id="btn-browse-files">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Scegli file
+    </button>
+    <button class="btn-browse btn-browse-folder" id="btn-browse-folder" style="margin-left:10px;background:rgba(255,255,255,.06);box-shadow:none;border:1px solid rgba(255,255,255,.12);">
+      <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+      Cartella
+    </button>
+    <!-- input file singoli (mobile + desktop) -->
+    <input type="file" id="file-input" multiple accept="*/*"/>
+    <!-- input cartella (solo desktop/Android) -->
+    <input type="file" id="folder-input" multiple webkitdirectory accept="*/*" style="display:none"/>
+  </div>
+
+  <!-- TOOLBAR -->
+  <div class="toolbar" id="toolbar">
+    <div class="t-stats" id="toolbar-stats"></div>
+    <button class="btn-all" id="btn-all" onclick="processAll()">
+      <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      Processa tutti
+    </button>
+  </div>
+
+  <!-- FILE LIST -->
+  <div id="file-list"></div>
+
+</div>
+
+<!-- TOAST -->
+<div id="toast"><div class="toast-dot" id="toast-dot"></div><span id="toast-msg"></span></div>
+
+<!-- 1. CONFIG — metti le chiavi API qui -->
+<script src="config.js"></script>
+<!-- 2. LOGICA APP -->
+<script src="app.js"></script>
+<!-- 3. ANIMAZIONI onde (rAF, smooth su tutti i browser) -->
+<script src="animations.js"></script>
+
+</body>
+</html>
