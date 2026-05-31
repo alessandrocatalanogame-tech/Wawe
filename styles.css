@@ -580,3 +580,99 @@ header {
     transition-duration: .01ms !important;
   }
 }
+
+/* ── IMAGE PREVIEW BEFORE/AFTER SLIDER ──────────────────────── */
+.card-preview {
+  margin: 12px 0 0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.preview-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.preview-label-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 4px;
+}
+.preview-lbl {
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  color: rgba(255,255,255,.4);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.enhanced-lbl {
+  color: #34d399;
+}
+.preview-slider-wrap {
+  position: relative;
+  width: 100%;
+  max-height: 300px;
+  overflow: hidden;
+  border-radius: 8px;
+  cursor: ew-resize;
+  user-select: none;
+  -webkit-user-select: none;
+  background: #000;
+}
+.preview-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 300px;
+  object-fit: contain;
+}
+.preview-original {
+  position: relative;
+  z-index: 1;
+}
+.preview-enhanced-clip {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  overflow: hidden;
+  z-index: 2;
+}
+.preview-enhanced-clip .preview-enhanced {
+  width: auto;
+  min-width: 100vw;
+  max-width: none;
+}
+.preview-divider {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: #fff;
+  z-index: 3;
+  transform: translateX(-50%);
+  pointer-events: none;
+  box-shadow: 0 0 8px rgba(0,0,0,.5);
+}
+.preview-divider::before,
+.preview-divider::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #fff;
+  top: 50%;
+  margin-top: -14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.4);
+}
+.preview-divider::after {
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.5'%3E%3Cpolyline points='15 18 9 12 15 6'/%3E%3Cpolyline points='9 18 15 12 9 6' transform='translate(0,0)'/%3E%3C/svg%3E") center/14px no-repeat #fff;
+}
+.preview-hint {
+  text-align: center;
+  font-size: 10px;
+  color: rgba(255,255,255,.25);
+  font-family: 'JetBrains Mono', monospace;
+  margin: 2px 0 0;
+}
