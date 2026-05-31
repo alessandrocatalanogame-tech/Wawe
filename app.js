@@ -1,10 +1,11 @@
 // ============================================================
-//  WAWE — APP LOGIC
+//  WAWE — APP LOGIC v2 (con enhancement reale immagini + AI visiva)
 // ============================================================
 
 const GROQ_KEY     = WAWE_CONFIG.GROQ_KEY;
 const GOFILE_TOKEN = WAWE_CONFIG.GOFILE_TOKEN;
 const GROQ_MODEL   = WAWE_CONFIG.GROQ_MODEL;
+const ANTHROPIC_KEY = WAWE_CONFIG.ANTHROPIC_KEY;
 
 // ── STATE ────────────────────────────────────────────────────
 let files = new Map();
@@ -20,13 +21,11 @@ dz.addEventListener('drop', e => {
   addFiles([...e.dataTransfer.files]);
 });
 
-// click sulla dropzone apre il file picker (non sui bottoni)
 dz.addEventListener('click', e => {
   if (e.target.closest('button') || e.target.closest('input')) return;
   document.getElementById('file-input').click();
 });
 
-// ── FILE INPUT HANDLERS ──────────────────────────────────────
 document.getElementById('btn-browse-files').addEventListener('click', e => {
   e.stopPropagation();
   document.getElementById('file-input').click();
@@ -35,7 +34,6 @@ document.getElementById('btn-browse-files').addEventListener('click', e => {
 document.getElementById('btn-browse-folder').addEventListener('click', e => {
   e.stopPropagation();
   const fi = document.getElementById('folder-input');
-  // webkitdirectory non supportato su iOS Safari — fallback a file picker normale
   if (typeof fi.webkitdirectory !== 'undefined') {
     fi.click();
   } else {
@@ -54,7 +52,6 @@ document.getElementById('folder-input').addEventListener('change', e => {
 function addFiles(list) {
   if (!list || list.length === 0) return;
   list.forEach(f => {
-    // salta file di sistema nascosti (es. .DS_Store)
     if (f.name.startsWith('.')) return;
     const id = ++uid;
     files.set(id, { file: f, status: 'idle' });
@@ -128,7 +125,7 @@ function buildCard(id, file) {
         </div>
       </div>
       <div class="card-actions">
-        <button class="btn-analyze" id="btn-${id}" onclick="processSingle(${id})">Analizza</button>
+        <button class="btn-analyze" id="btn-${id}" onclick="processSingle(${id})">Enhance</button>
         <button class="btn-remove"  onclick="removeFile(${id})" title="Rimuovi">
           <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
@@ -138,9 +135,10 @@ function buildCard(id, file) {
       <div class="prog-track"><div class="prog-fill" id="bar-${id}"></div></div>
       <div class="prog-label" id="plbl-${id}"></div>
     </div>
+    <div class="card-preview" id="preview-${id}" style="display:none"></div>
     <div class="card-analysis" id="analysis-${id}">
       <div class="analysis-head">
-        <span class="analysis-label">AI Analysis</span>
+        <span class="analysis-label">Enhancement Report</span>
         <div class="badge-row" id="badges-${id}"></div>
       </div>
       <div class="analysis-body">
@@ -181,20 +179,14 @@ async function processSingle(id) {
   btn.disabled = true; btn.textContent = '...';
 
   try {
-    setProgress(id, 10, 'connessione a groq...');
-    const analysis = await groqAnalyze(entry.file);
+    const cat = getCategory(entry.file);
 
-    setProgress(id, 60, 'upload su gofile...');
-    const url = await gofileUpload(entry.file);
+    if (cat === 'image') {
+      await processImage(id, entry);
+    } else {
+      await processGeneric(id, entry, cat);
+    }
 
-    setProgress(id, 100, 'completato');
-    showAnalysis(id, analysis);
-    showDownload(id, url);
-    entry.status = 'done';
-    setCardStatus(id, 'done');
-    document.getElementById(`card-${id}`).classList.add('done');
-    btn.textContent = 'done';
-    toast('File processato', 'green');
   } catch (err) {
     entry.status = 'error';
     setCardStatus(id, 'error');
@@ -208,19 +200,270 @@ async function processSingle(id) {
   refreshToolbar();
 }
 
-// ── GROQ API ─────────────────────────────────────────────────
-async function groqAnalyze(file) {
-  const sys = `Sei un analizzatore file professionale. Rispondi SOLO con JSON valido, niente markdown, niente testo fuori dal JSON:
-{"quality":"good|degraded|corrupted","virus_risk":"none|suspicious|dangerous","readable":true,"summary":"una riga concisa","issues":["max 3 problemi specifici"],"suggestions":"suggerimenti pratici in italiano, max 2 righe"}`;
+// ── IMAGE PROCESSING (Canvas enhancement + AI visiva) ────────
+async function processImage(id, entry) {
+  const btn = document.getElementById(`btn-${id}`);
 
-  const msg = `File: "${file.name}" | tipo MIME: ${file.type||'sconosciuto'} | dimensione: ${fmtSize(file.size)} | categoria: ${getCategory(file)}
-Analizza: per video/audio valuta qualità e lag; per documenti leggibilità e corruzione; per archivi integrità. Valuta sempre rischi virus.`;
+  setProgress(id, 10, 'caricamento immagine...');
+  const originalDataUrl = await fileToDataUrl(entry.file);
+
+  setProgress(id, 25, 'analisi AI visiva...');
+  const aiResult = await claudeAnalyzeImage(originalDataUrl, entry.file.name);
+
+  setProgress(id, 50, 'enhancement in corso...');
+  const enhancedBlob = await enhanceImage(originalDataUrl, aiResult.enhancements);
+
+  setProgress(id, 70, 'mostra anteprima...');
+  showImagePreview(id, originalDataUrl, enhancedBlob);
+
+  setProgress(id, 80, 'upload su gofile...');
+  const enhancedFile = new File([enhancedBlob], 'wawe-enhanced-' + entry.file.name, { type: 'image/jpeg' });
+  const url = await gofileUpload(enhancedFile);
+
+  setProgress(id, 100, 'completato');
+  showAnalysis(id, aiResult, true);
+  showDownload(id, url);
+  entry.status = 'done';
+  setCardStatus(id, 'done');
+  document.getElementById(`card-${id}`).classList.add('done');
+  btn.textContent = 'done';
+  toast('Immagine migliorata', 'green');
+}
+
+// ── CLAUDE VISION ANALYSIS ───────────────────────────────────
+async function claudeAnalyzeImage(dataUrl, filename) {
+  const base64 = dataUrl.split(',')[1];
+  const mediaType = dataUrl.split(';')[0].split(':')[1] || 'image/jpeg';
+
+  const prompt = `Sei un esperto di image enhancement. Analizza questa immagine e rispondi SOLO con JSON valido, zero markdown:
+{
+  "quality": "good|degraded|poor",
+  "summary": "descrizione concisa dei problemi visivi che vedi",
+  "issues": ["problema 1", "problema 2", "problema 3"],
+  "suggestions": "cosa hai migliorato e perché, in italiano, max 2 righe",
+  "enhancements": {
+    "brightness": 0,
+    "contrast": 15,
+    "saturation": 10,
+    "sharpness": 20,
+    "denoise": true
+  }
+}
+
+I valori enhancement vanno da -100 a +100 (0 = nessuna modifica). Sceglili basandoti sui problemi reali che vedi nell'immagine.
+Se l'immagine è sgranata → aumenta sharpness (20-40), abilita denoise.
+Se è scura → aumenta brightness (10-30).
+Se i colori sono spenti → aumenta saturation (10-25).
+Se è piatta → aumenta contrast (10-25).`;
+
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': ANTHROPIC_KEY,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+      'anthropic-dangerous-direct-browser-calls': 'true'
+    },
+    body: JSON.stringify({
+      model: 'claude-opus-4-5',
+      max_tokens: 600,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+          { type: 'text', text: prompt }
+        ]
+      }]
+    })
+  });
+
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e?.error?.message || `Claude vision errore ${r.status}`);
+  }
+
+  const data = await r.json();
+  const raw = data.content?.[0]?.text || '{}';
+  try {
+    return JSON.parse(raw.replace(/```[\w]*\n?|```/g, '').trim());
+  } catch {
+    return {
+      quality: 'unknown', summary: raw.slice(0,120), issues: [], suggestions: '',
+      enhancements: { brightness: 0, contrast: 10, saturation: 5, sharpness: 15, denoise: true }
+    };
+  }
+}
+
+// ── CANVAS IMAGE ENHANCEMENT ─────────────────────────────────
+function enhanceImage(dataUrl, enhancements = {}) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width  = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+
+      // Disegna immagine originale
+      ctx.drawImage(img, 0, 0);
+
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+
+      const brightness  = (enhancements.brightness  || 0);
+      const contrast    = (enhancements.contrast     || 0);
+      const saturation  = (enhancements.saturation   || 0);
+      const sharpness   = (enhancements.sharpness    || 0);
+      const denoise     = (enhancements.denoise      || false);
+
+      // Fattore contrasto (0-2, 1 = neutro)
+      const contrastFactor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+
+      for (let i = 0; i < data.length; i += 4) {
+        let r = data[i], g = data[i+1], b = data[i+2];
+
+        // 1. Brightness
+        r += brightness; g += brightness; b += brightness;
+
+        // 2. Contrast
+        r = contrastFactor * (r - 128) + 128;
+        g = contrastFactor * (g - 128) + 128;
+        b = contrastFactor * (b - 128) + 128;
+
+        // 3. Saturation (via HSL shift)
+        const avg = (r + g + b) / 3;
+        const sat = saturation / 100;
+        r = avg + (r - avg) * (1 + sat);
+        g = avg + (g - avg) * (1 + sat);
+        b = avg + (b - avg) * (1 + sat);
+
+        data[i]   = Math.max(0, Math.min(255, r));
+        data[i+1] = Math.max(0, Math.min(255, g));
+        data[i+2] = Math.max(0, Math.min(255, b));
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+
+      // 4. Sharpness (unsharp mask via filtro CSS)
+      if (sharpness > 0) {
+        const amount = sharpness / 100;
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width  = canvas.width;
+        tempCanvas.height = canvas.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.filter = `blur(${Math.max(0.3, 1 - amount * 0.7)}px)`;
+        tempCtx.drawImage(canvas, 0, 0);
+
+        // Unsharp mask: original + (original - blurred) * amount
+        const sharpData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const blurData  = tempCtx.getImageData(0, 0, canvas.width, canvas.height);
+        for (let i = 0; i < sharpData.data.length; i += 4) {
+          sharpData.data[i]   = Math.max(0, Math.min(255, sharpData.data[i]   + (sharpData.data[i]   - blurData.data[i])   * amount));
+          sharpData.data[i+1] = Math.max(0, Math.min(255, sharpData.data[i+1] + (sharpData.data[i+1] - blurData.data[i+1]) * amount));
+          sharpData.data[i+2] = Math.max(0, Math.min(255, sharpData.data[i+2] + (sharpData.data[i+2] - blurData.data[i+2]) * amount));
+        }
+        ctx.putImageData(sharpData, 0, 0);
+      }
+
+      // 5. Denoise (blur leggero per ridurre grain)
+      if (denoise) {
+        const denoiseCanvas = document.createElement('canvas');
+        denoiseCanvas.width  = canvas.width;
+        denoiseCanvas.height = canvas.height;
+        const dCtx = denoiseCanvas.getContext('2d');
+        dCtx.filter = 'blur(0.4px)';
+        dCtx.drawImage(canvas, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(denoiseCanvas, 0, 0);
+      }
+
+      canvas.toBlob(resolve, 'image/jpeg', 0.93);
+    };
+    img.src = dataUrl;
+  });
+}
+
+// ── IMAGE PREVIEW (before/after slider) ──────────────────────
+function showImagePreview(id, originalUrl, enhancedBlob) {
+  const enhancedUrl = URL.createObjectURL(enhancedBlob);
+  const previewEl = document.getElementById(`preview-${id}`);
+  previewEl.style.display = 'block';
+  previewEl.innerHTML = `
+    <div class="preview-wrap">
+      <div class="preview-label-row">
+        <span class="preview-lbl">Originale</span>
+        <span class="preview-lbl enhanced-lbl">Migliorata ✦</span>
+      </div>
+      <div class="preview-slider-wrap" id="slider-wrap-${id}">
+        <img class="preview-img preview-original" src="${originalUrl}" alt="Originale"/>
+        <div class="preview-enhanced-clip" id="enhanced-clip-${id}" style="width:50%">
+          <img class="preview-img preview-enhanced" src="${enhancedUrl}" alt="Migliorata"/>
+        </div>
+        <div class="preview-divider" id="divider-${id}" style="left:50%"></div>
+      </div>
+      <p class="preview-hint">← trascina per confrontare →</p>
+    </div>`;
+
+  // Slider drag logic
+  const wrap     = document.getElementById(`slider-wrap-${id}`);
+  const clip     = document.getElementById(`enhanced-clip-${id}`);
+  const divider  = document.getElementById(`divider-${id}`);
+  let dragging   = false;
+
+  function setSlider(clientX) {
+    const rect = wrap.getBoundingClientRect();
+    const pct  = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    clip.style.width    = (pct * 100) + '%';
+    divider.style.left  = (pct * 100) + '%';
+  }
+
+  wrap.addEventListener('mousedown',  e => { dragging = true; setSlider(e.clientX); });
+  wrap.addEventListener('touchstart', e => { dragging = true; setSlider(e.touches[0].clientX); }, { passive: true });
+  window.addEventListener('mousemove', e => { if (dragging) setSlider(e.clientX); });
+  window.addEventListener('touchmove', e => { if (dragging) setSlider(e.touches[0].clientX); }, { passive: true });
+  window.addEventListener('mouseup',  () => dragging = false);
+  window.addEventListener('touchend', () => dragging = false);
+}
+
+// ── GENERIC PROCESSING (video/audio/docs — AI testuale + upload) ─
+async function processGeneric(id, entry, cat) {
+  const btn = document.getElementById(`btn-${id}`);
+
+  setProgress(id, 15, 'analisi AI...');
+  const analysis = await groqAnalyze(entry.file, cat);
+
+  setProgress(id, 65, 'upload su gofile...');
+  const url = await gofileUpload(entry.file);
+
+  setProgress(id, 100, 'completato');
+  showAnalysis(id, analysis, false);
+  showDownload(id, url);
+  entry.status = 'done';
+  setCardStatus(id, 'done');
+  document.getElementById(`card-${id}`).classList.add('done');
+  btn.textContent = 'done';
+  toast('File processato', 'green');
+}
+
+// ── GROQ API (testo, per file non-immagine) ───────────────────
+async function groqAnalyze(file, cat) {
+  let catPrompt = '';
+  if (cat === 'video') catPrompt = 'Per il video: valuta qualità visiva presunta, frame rate, risoluzione dal nome file, problemi audio comuni. Suggerisci strumenti per migliorarlo (HandBrake, ffmpeg, DaVinci Resolve).';
+  else if (cat === 'audio') catPrompt = 'Per l\'audio: valuta qualità presunta, bitrate, rumore di fondo probabile. Suggerisci strumenti (Audacity, Adobe Audition, ffmpeg con filtri).';
+  else if (cat === 'pdf') catPrompt = 'Per il PDF: valuta leggibilità, possibile scan qualità bassa, testo estraibile. Suggerisci miglioramenti (OCR, compressione, Adobe Acrobat).';
+  else if (cat === 'doc') catPrompt = 'Per il documento: valuta integrità, dimensione, possibili problemi di formattazione.';
+  else catPrompt = 'Valuta il file in generale.';
+
+  const sys = `Sei un esperto di file enhancement. Rispondi SOLO con JSON valido, niente markdown:
+{"quality":"good|degraded|poor","summary":"descrizione concisa","issues":["problema 1","problema 2"],"suggestions":"cosa si può fare per migliorarlo, in italiano, max 2 righe"}`;
+
+  const msg = `File: "${file.name}" | MIME: ${file.type||'sconosciuto'} | Dimensione: ${fmtSize(file.size)}\n${catPrompt}`;
 
   const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: GROQ_MODEL, max_tokens: 512, temperature: 0.1,
+      model: GROQ_MODEL, max_tokens: 400, temperature: 0.1,
       messages: [
         { role: 'system', content: sys },
         { role: 'user',   content: msg }
@@ -237,22 +480,20 @@ Analizza: per video/audio valuta qualità e lag; per documenti leggibilità e co
   try {
     return JSON.parse(raw.replace(/```[\w]*\n?|```/g, '').trim());
   } catch {
-    return { quality:'unknown', virus_risk:'none', readable:true, summary: raw.slice(0,120), issues:[], suggestions:'' };
+    return { quality:'unknown', summary: raw.slice(0,120), issues:[], suggestions:'' };
   }
 }
 
 // ── GOFILE API ───────────────────────────────────────────────
 async function gofileUpload(file) {
-  // Step 1: recupera il server ottimale
   const sr = await fetch('https://api.gofile.io/servers', { method: 'GET' });
   if (!sr.ok) throw new Error('GoFile: server non raggiungibile');
   const sd = await sr.json();
   if (sd.status !== 'ok' || !sd.data?.servers?.length) {
     throw new Error('GoFile: nessun server disponibile');
   }
-  const server = sd.data.servers[0].name; // es. "store1"
+  const server = sd.data.servers[0].name;
 
-  // Step 2: upload sul server
   const form = new FormData();
   form.append('file', file);
 
@@ -269,7 +510,16 @@ async function gofileUpload(file) {
   return ud.data?.downloadPage || ud.data?.directLink || '#';
 }
 
-// ── UI HELPERS ───────────────────────────────────────────────
+// ── HELPERS ──────────────────────────────────────────────────
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = e => resolve(e.target.result);
+    reader.onerror = () => reject(new Error('Lettura file fallita'));
+    reader.readAsDataURL(file);
+  });
+}
+
 function setProgress(id, pct, label) {
   document.getElementById(`prog-${id}`).style.display = 'block';
   document.getElementById(`bar-${id}`).style.width    = pct + '%';
@@ -283,16 +533,14 @@ function setCardStatus(id, s) {
   el.className   = `s-${s}`;
 }
 
-function showAnalysis(id, a) {
+function showAnalysis(id, a, isEnhanced) {
   document.getElementById(`analysis-${id}`).style.display = 'block';
   const badges = [];
-  if      (a.quality === 'good')        badges.push(['green', 'OK']);
-  else if (a.quality === 'degraded')    badges.push(['amber', 'Degraded']);
-  else if (a.quality === 'corrupted')   badges.push(['red',   'Corrupted']);
-  if      (a.virus_risk === 'none')       badges.push(['green', 'Clean']);
-  else if (a.virus_risk === 'suspicious') badges.push(['amber', 'Suspicious']);
-  else if (a.virus_risk === 'dangerous')  badges.push(['red',   'VIRUS']);
-  if (a.readable === false) badges.push(['amber', 'Illeggibile']);
+  const q = a.quality || 'unknown';
+  if      (q === 'good')     badges.push(['green', isEnhanced ? 'Enhanced ✦' : 'OK']);
+  else if (q === 'degraded') badges.push(['amber', 'Migliorata ✦']);
+  else if (q === 'poor')     badges.push(['red',   'Migliorata ✦']);
+  else                       badges.push(['amber',  'Processata']);
 
   document.getElementById(`badges-${id}`).innerHTML = badges.map(([t,l]) =>
     `<span class="badge badge-${t}"><span class="dot"></span>${l}</span>`).join('');
@@ -315,7 +563,6 @@ function copyLink(id) {
   if (navigator.clipboard) {
     navigator.clipboard.writeText(url).then(() => toast('Link copiato', 'green'));
   } else {
-    // fallback per browser senza clipboard API (alcuni mobile)
     const ta = document.createElement('textarea');
     ta.value = url;
     document.body.appendChild(ta);
