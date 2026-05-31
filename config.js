@@ -14,7 +14,7 @@ const WAWE_CONFIG = {
 
   // 3. Anthropic API Key (per analisi visiva immagini)
   //    https://console.anthropic.com → API Keys
-  ANTHROPIC_KEY: "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",
+  ANTHROPIC_KEY: "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",
 
   // Modello Groq (non modificare)
   GROQ_MODEL: "llama-3.3-70b-versatile",
