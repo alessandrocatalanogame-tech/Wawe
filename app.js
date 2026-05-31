@@ -256,21 +256,20 @@ Se è scura → aumenta brightness (10-30).
 Se i colori sono spenti → aumenta saturation (10-25).
 Se è piatta → aumenta contrast (10-25).`;
 
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
+  const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
-      'x-api-key': ANTHROPIC_KEY,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-      'anthropic-dangerous-direct-browser-calls': 'true'
+      'Authorization': `Bearer ${GROQ_KEY}`,
+      'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      model: 'claude-opus-4-5',
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
       max_tokens: 600,
+      temperature: 0.1,
       messages: [{
         role: 'user',
         content: [
-          { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+          { type: 'image_url', image_url: { url: `data:${mediaType};base64,${base64}` } },
           { type: 'text', text: prompt }
         ]
       }]
@@ -279,11 +278,11 @@ Se è piatta → aumenta contrast (10-25).`;
 
   if (!r.ok) {
     const e = await r.json().catch(() => ({}));
-    throw new Error(e?.error?.message || `Claude vision errore ${r.status}`);
+    throw new Error(e?.error?.message || `Groq vision errore ${r.status}`);
   }
 
   const data = await r.json();
-  const raw = data.content?.[0]?.text || '{}';
+  const raw = data.choices?.[0]?.message?.content || '{}';
   try {
     return JSON.parse(raw.replace(/```[\w]*\n?|```/g, '').trim());
   } catch {
@@ -591,17 +590,50 @@ function esc(s) {
 
 // ── PWA INSTALL ──────────────────────────────────────────────
 let _dp;
-window.addEventListener('beforeinstallprompt', e => {
-  e.preventDefault(); _dp = e;
+
+// Detect iOS
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
+  || window.navigator.standalone === true;
+
+// iOS: mostra banner con istruzioni se non già installata
+if (isIOS && !isInStandaloneMode) {
+  const banner = document.getElementById('ios-install-banner');
+  if (banner) {
+    // Mostra solo se non già dismessa in questa sessione
+    if (!sessionStorage.getItem('ios-banner-dismissed')) {
+      setTimeout(() => banner.style.display = 'flex', 1500);
+    }
+    const closeBtn = banner.querySelector('.ios-banner-close');
+    if (closeBtn) closeBtn.addEventListener('click', () => {
+      sessionStorage.setItem('ios-banner-dismissed', '1');
+    });
+  }
+  // Bottone Install → mostra banner
   document.getElementById('install-btn').classList.add('show');
-});
-document.getElementById('install-btn').addEventListener('click', async () => {
-  if (!_dp) return;
-  _dp.prompt();
-  const { outcome } = await _dp.userChoice;
-  if (outcome === 'accepted') document.getElementById('install-btn').classList.remove('show');
-  _dp = null;
-});
+  document.getElementById('install-btn').addEventListener('click', () => {
+    const banner = document.getElementById('ios-install-banner');
+    if (banner) banner.style.display = 'flex';
+  });
+} else {
+  // Android / Desktop: usa beforeinstallprompt
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault(); _dp = e;
+    document.getElementById('install-btn').classList.add('show');
+  });
+  document.getElementById('install-btn').addEventListener('click', async () => {
+    if (!_dp) return;
+    _dp.prompt();
+    const { outcome } = await _dp.userChoice;
+    if (outcome === 'accepted') document.getElementById('install-btn').classList.remove('show');
+    _dp = null;
+  });
+}
+
+// Se già installata come PWA, nascondi il bottone
+if (isInStandaloneMode) {
+  document.getElementById('install-btn').style.display = 'none';
+}
 
 // ── SERVICE WORKER ───────────────────────────────────────────
 if ('serviceWorker' in navigator) {
