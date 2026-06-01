@@ -8,6 +8,13 @@
 <meta name="theme-color" content="#080c14"/>
 <link rel="manifest" href="manifest.json"/>
 <link rel="apple-touch-icon" href="public/icons/icon-192.png"/>
+<!-- iOS PWA -->
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Wawe"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<!-- iOS splash screens -->
+<link rel="apple-touch-startup-image" href="public/icons/icon-512.png"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet"/>
@@ -136,6 +143,20 @@
   <!-- FILE LIST -->
   <div id="file-list"></div>
 
+</div>
+
+<!-- iOS INSTALL BANNER -->
+<div id="ios-install-banner" style="display:none">
+  <div class="ios-banner-inner">
+    <div class="ios-banner-icon">
+      <img src="public/icons/icon-192.png" width="40" height="40" style="border-radius:10px"/>
+    </div>
+    <div class="ios-banner-text">
+      <strong>Installa Wawe</strong>
+      <span>Tocca <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" fill="none" stroke-width="2"><path d="M12 16l-4-4h3V4h2v8h3l-4 4z"/><rect x="3" y="14" width="18" height="7" rx="2"/></svg> poi "Aggiungi a schermata Home"</span>
+    </div>
+    <button onclick="document.getElementById('ios-install-banner').style.display='none'" class="ios-banner-close">✕</button>
+  </div>
 </div>
 
 <!-- TOAST -->
