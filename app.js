@@ -240,7 +240,8 @@ async function claudeAnalyzeImage(dataUrl, filename) {
   "quality": "good|degraded|poor",
   "summary": "descrizione concisa dei problemi visivi che vedi",
   "issues": ["problema 1", "problema 2", "problema 3"],
-  "suggestions": "cosa hai migliorato e perché, in italiano, max 2 righe",
+  "corrections": [{"problem": "problema trovato", "fix": "come è stato corretto"}],
+  "suggestions": "consiglio finale in italiano, max 2 righe",
   "enhancements": {
     "brightness": 0,
     "contrast": 15,
@@ -394,34 +395,58 @@ function showImagePreview(id, originalUrl, enhancedBlob) {
         <span class="preview-lbl enhanced-lbl">Migliorata ✦</span>
       </div>
       <div class="preview-slider-wrap" id="slider-wrap-${id}">
-        <img class="preview-img preview-original" src="${originalUrl}" alt="Originale"/>
+        <img class="preview-img preview-original" src="${originalUrl}" alt="Originale" draggable="false"/>
         <div class="preview-enhanced-clip" id="enhanced-clip-${id}" style="width:50%">
-          <img class="preview-img preview-enhanced" src="${enhancedUrl}" alt="Migliorata"/>
+          <img class="preview-img preview-enhanced" src="${enhancedUrl}" alt="Migliorata" draggable="false"/>
         </div>
         <div class="preview-divider" id="divider-${id}" style="left:50%"></div>
       </div>
       <p class="preview-hint">← trascina per confrontare →</p>
     </div>`;
 
-  // Slider drag logic
-  const wrap     = document.getElementById(`slider-wrap-${id}`);
-  const clip     = document.getElementById(`enhanced-clip-${id}`);
-  const divider  = document.getElementById(`divider-${id}`);
-  let dragging   = false;
+  const wrap    = document.getElementById(`slider-wrap-${id}`);
+  const clip    = document.getElementById(`enhanced-clip-${id}`);
+  const divider = document.getElementById(`divider-${id}`);
+  let dragging  = false;
+  let rafId     = null;
 
   function setSlider(clientX) {
     const rect = wrap.getBoundingClientRect();
     const pct  = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    clip.style.width    = (pct * 100) + '%';
-    divider.style.left  = (pct * 100) + '%';
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(() => {
+      clip.style.width   = (pct * 100) + '%';
+      divider.style.left = (pct * 100) + '%';
+    });
   }
 
-  wrap.addEventListener('mousedown',  e => { dragging = true; setSlider(e.clientX); });
-  wrap.addEventListener('touchstart', e => { dragging = true; setSlider(e.touches[0].clientX); }, { passive: true });
-  window.addEventListener('mousemove', e => { if (dragging) setSlider(e.clientX); });
-  window.addEventListener('touchmove', e => { if (dragging) setSlider(e.touches[0].clientX); }, { passive: true });
-  window.addEventListener('mouseup',  () => dragging = false);
-  window.addEventListener('touchend', () => dragging = false);
+  wrap.addEventListener('mousedown', e => {
+    e.preventDefault();
+    dragging = true;
+    setSlider(e.clientX);
+  });
+
+  wrap.addEventListener('touchstart', e => {
+    dragging = true;
+    setSlider(e.touches[0].clientX);
+  }, { passive: true });
+
+  wrap.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    e.preventDefault();
+    setSlider(e.clientX);
+  });
+
+  wrap.addEventListener('touchmove', e => {
+    if (!dragging) return;
+    e.stopPropagation();
+    setSlider(e.touches[0].clientX);
+  }, { passive: true });
+
+  const stop = () => { dragging = false; };
+  wrap.addEventListener('mouseup',   stop);
+  wrap.addEventListener('mouseleave', stop);
+  wrap.addEventListener('touchend',  stop);
 }
 
 // ── GENERIC PROCESSING (video/audio/docs — AI testuale + upload) ─
@@ -454,7 +479,7 @@ async function groqAnalyze(file, cat) {
   else catPrompt = 'Valuta il file in generale.';
 
   const sys = `Sei un esperto di file enhancement. Rispondi SOLO con JSON valido, niente markdown:
-{"quality":"good|degraded|poor","summary":"descrizione concisa","issues":["problema 1","problema 2"],"suggestions":"cosa si può fare per migliorarlo, in italiano, max 2 righe"}`;
+{"quality":"good|degraded|poor","summary":"descrizione concisa del problema principale","issues":["problema 1","problema 2","problema 3"],"corrections":[{"problem":"problema trovato","fix":"come è stato o come va corretto"}],"suggestions":"consiglio finale in italiano, max 2 righe"}`;
 
   const msg = `File: "${file.name}" | MIME: ${file.type||'sconosciuto'} | Dimensione: ${fmtSize(file.size)}\n${catPrompt}`;
 
@@ -544,9 +569,24 @@ function showAnalysis(id, a, isEnhanced) {
   document.getElementById(`badges-${id}`).innerHTML = badges.map(([t,l]) =>
     `<span class="badge badge-${t}"><span class="dot"></span>${l}</span>`).join('');
   document.getElementById(`asummary-${id}`).textContent = a.summary || '';
+
+  // Issues list
   document.getElementById(`aissues-${id}`).innerHTML = (a.issues || []).map(i =>
     `<div class="issue-item"><div class="issue-dot"></div><span>${esc(i)}</span></div>`).join('');
-  document.getElementById(`adetail-${id}`).textContent = a.suggestions || '';
+
+  // Corrections: problema → come corretto
+  const corrections = a.corrections || [];
+  const corrEl = document.getElementById(`adetail-${id}`);
+  if (corrections.length > 0) {
+    corrEl.innerHTML = corrections.map(c =>
+      `<div class="correction-item">
+        <div class="corr-problem"><span class="corr-icon">⚠</span>${esc(c.problem || '')}</div>
+        <div class="corr-fix"><span class="corr-icon corr-ok">✓</span>${esc(c.fix || '')}</div>
+      </div>`
+    ).join('') + (a.suggestions ? `<div class="corr-suggestions">${esc(a.suggestions)}</div>` : '');
+  } else {
+    corrEl.textContent = a.suggestions || '';
+  }
 }
 
 function showDownload(id, url) {
@@ -592,7 +632,8 @@ function esc(s) {
 let _dp;
 
 // Detect iOS
-const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || 
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
   || window.navigator.standalone === true;
 
