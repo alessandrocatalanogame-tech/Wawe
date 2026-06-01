@@ -735,3 +735,72 @@ header {
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
 }
+
+/* ── CORRECTIONS (problema → fix) ───────────────────────────── */
+.correction-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,.03);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  border-left: 2px solid rgba(251,191,36,.3);
+}
+.corr-problem {
+  font-size: 12px;
+  color: rgba(251,191,36,.85);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.corr-fix {
+  font-size: 12px;
+  color: rgba(52,211,153,.85);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.corr-icon {
+  font-size: 11px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.corr-ok { color: #34d399; }
+.corr-suggestions {
+  font-size: 11px;
+  color: rgba(255,255,255,.35);
+  margin-top: 6px;
+  font-style: italic;
+}
+
+/* ── SLIDER FIXES ────────────────────────────────────────────── */
+.preview-slider-wrap {
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.preview-slider-wrap img {
+  pointer-events: none;
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+.preview-enhanced-clip {
+  overflow: hidden;
+}
+.preview-enhanced-clip .preview-enhanced {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  max-height: none;
+}
+.preview-slider-wrap {
+  position: relative;
+}
+.preview-original {
+  width: 100%;
+  display: block;
+}
