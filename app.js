@@ -1,682 +1,552 @@
-// ============================================================
-//  WAWE — APP LOGIC v2 (con enhancement reale immagini + AI visiva)
-// ============================================================
+/* ─── WAWE · app.js ──────────────────────────────────────────────────────────── */
+/*
+ *  Enhancement:  Replicate — nightmareai/real-esrgan  (AI upscaling, real improvement)
+ *  Report:       Groq      — llama-3.2-11b-vision-preview (fast, free tier)
+ */
 
-const GROQ_KEY     = WAWE_CONFIG.GROQ_KEY;
-const GOFILE_TOKEN = WAWE_CONFIG.GOFILE_TOKEN;
-const GROQ_MODEL   = WAWE_CONFIG.GROQ_MODEL;
-const ANTHROPIC_KEY = WAWE_CONFIG.ANTHROPIC_KEY;
+// ─── Keys (stored in localStorage) ───────────────────────────────────────────
+let REPLICATE_KEY = localStorage.getItem('wawe_replicate') || '';
+let GROQ_KEY      = localStorage.getItem('wawe_groq')      || '';
 
-// ── STATE ────────────────────────────────────────────────────
-let files = new Map();
-let uid   = 0;
+// ─── State ────────────────────────────────────────────────────────────────────
+let currentFile     = null;
+let currentMode     = 'enhance';
+let deferredInstall = null;
+let isDragging      = false;
+let compareReady    = false;
 
-// ── DRAG & DROP + TOUCH ──────────────────────────────────────
-const dz = document.getElementById('dropzone');
+// ─── DOM refs ─────────────────────────────────────────────────────────────────
+const dropZone        = document.getElementById('dropZone');
+const fileInput       = document.getElementById('fileInput');
+const filePreview     = document.getElementById('filePreview');
+const thumbEl         = document.getElementById('previewThumb');
+const fileNameEl      = document.getElementById('fileName');
+const fileMetaEl      = document.getElementById('fileMeta');
+const removeFileBtn   = document.getElementById('removeFile');
+const optionsSection  = document.getElementById('options');
+const modeButtons     = document.querySelectorAll('.mode-btn');
+const btnProcess      = document.getElementById('btnProcess');
+const progressSection = document.getElementById('progressSection');
+const progressFill    = document.getElementById('progressFill');
+const progressText    = document.getElementById('progressText');
+const stepsEl         = document.getElementById('steps');
+const resultSection   = document.getElementById('resultSection');
+const compareWrap     = document.getElementById('compareWrap');
+const imgBefore       = document.getElementById('imgBefore');
+const imgAfter        = document.getElementById('imgAfter');
+const compareDivider  = document.getElementById('compareDivider');
+const reportText      = document.getElementById('reportText');
+const btnDownload     = document.getElementById('btnDownload');
+const btnReset        = document.getElementById('btnReset');
+const installBanner   = document.getElementById('installBanner');
+const installBtn      = document.getElementById('installBtn');
+const apiKeyModal     = document.getElementById('apiKeyModal');
+const apiKeyToggle    = document.getElementById('apiKeyToggle');
+const apiKeyStatus    = document.getElementById('apiKeyStatus');
+const repKeyInput     = document.getElementById('repKeyInput');
+const groqKeyInput    = document.getElementById('groqKeyInput');
+const apiKeySave      = document.getElementById('apiKeySave');
 
-dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('over'); });
-dz.addEventListener('dragleave', e => { if (!dz.contains(e.relatedTarget)) dz.classList.remove('over'); });
-dz.addEventListener('drop', e => {
-  e.preventDefault(); dz.classList.remove('over');
-  addFiles([...e.dataTransfer.files]);
-});
-
-dz.addEventListener('click', e => {
-  if (e.target.closest('button') || e.target.closest('input')) return;
-  document.getElementById('file-input').click();
-});
-
-document.getElementById('btn-browse-files').addEventListener('click', e => {
-  e.stopPropagation();
-  document.getElementById('file-input').click();
-});
-
-document.getElementById('btn-browse-folder').addEventListener('click', e => {
-  e.stopPropagation();
-  const fi = document.getElementById('folder-input');
-  if (typeof fi.webkitdirectory !== 'undefined') {
-    fi.click();
+// ─── API Key modal ────────────────────────────────────────────────────────────
+function updateKeyStatus() {
+  const both = REPLICATE_KEY && GROQ_KEY;
+  const one  = REPLICATE_KEY || GROQ_KEY;
+  if (both) {
+    apiKeyStatus.textContent = 'Keys set';
+    apiKeyStatus.className   = 'api-key-status set';
+  } else if (one) {
+    apiKeyStatus.textContent = 'Partial keys';
+    apiKeyStatus.className   = 'api-key-status set';
   } else {
-    document.getElementById('file-input').click();
+    apiKeyStatus.textContent = 'No API keys';
+    apiKeyStatus.className   = 'api-key-status unset';
+  }
+}
+updateKeyStatus();
+
+apiKeyToggle.addEventListener('click', () => {
+  apiKeyModal.classList.toggle('visible');
+  if (apiKeyModal.classList.contains('visible')) {
+    repKeyInput.value  = REPLICATE_KEY;
+    groqKeyInput.value = GROQ_KEY;
   }
 });
 
-document.getElementById('file-input').addEventListener('change', e => {
-  addFiles([...e.target.files]); e.target.value = '';
-});
-document.getElementById('folder-input').addEventListener('change', e => {
-  addFiles([...e.target.files]); e.target.value = '';
+apiKeyModal.addEventListener('click', (e) => {
+  if (e.target === apiKeyModal) apiKeyModal.classList.remove('visible');
 });
 
-// ── FILE MANAGEMENT ──────────────────────────────────────────
-function addFiles(list) {
-  if (!list || list.length === 0) return;
-  list.forEach(f => {
-    if (f.name.startsWith('.')) return;
-    const id = ++uid;
-    files.set(id, { file: f, status: 'idle' });
-    document.getElementById('file-list').prepend(buildCard(id, f));
+apiKeySave.addEventListener('click', () => {
+  const rep  = repKeyInput.value.trim();
+  const groq = groqKeyInput.value.trim();
+  if (!rep && !groq) { showToast('Enter at least one key'); return; }
+  if (rep)  { REPLICATE_KEY = rep;  localStorage.setItem('wawe_replicate', rep); }
+  if (groq) { GROQ_KEY      = groq; localStorage.setItem('wawe_groq', groq); }
+  apiKeyModal.classList.remove('visible');
+  updateKeyStatus();
+  showToast('Keys saved');
+});
+
+[repKeyInput, groqKeyInput].forEach(inp => {
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter')  apiKeySave.click();
+    if (e.key === 'Escape') apiKeyModal.classList.remove('visible');
   });
-  refreshToolbar();
-}
+});
 
-function removeFile(id) {
-  const card = document.getElementById(`card-${id}`);
-  if (card) {
-    card.style.transition = 'opacity .2s, transform .2s';
-    card.style.opacity    = '0';
-    card.style.transform  = 'translateX(20px)';
-    setTimeout(() => card.remove(), 200);
+// ─── File handling ────────────────────────────────────────────────────────────
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
+});
+dropZone.addEventListener('dragleave', (e) => {
+  if (!dropZone.contains(e.relatedTarget)) dropZone.classList.remove('drag-over');
+});
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) setFile(file);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) setFile(fileInput.files[0]); });
+removeFileBtn.addEventListener('click', (e) => { e.stopPropagation(); resetAll(); });
+
+function setFile(file) {
+  if (file.size > 50 * 1024 * 1024) { showToast('File too large — max 50 MB'); return; }
+  currentFile = file;
+  fileNameEl.textContent = file.name;
+  fileMetaEl.textContent = formatFileSize(file.size) + ' · ' + getFileType(file);
+  if (file.type.startsWith('image/')) {
+    thumbEl.src = URL.createObjectURL(file);
+    thumbEl.style.display = 'block';
+  } else {
+    thumbEl.style.display = 'none';
   }
-  files.delete(id);
-  refreshToolbar();
+  filePreview.classList.add('visible');
+  optionsSection.classList.add('visible');
+  btnProcess.classList.add('visible');
+  filterModes(file);
 }
 
-function refreshToolbar() {
-  const total = files.size;
-  const idle  = [...files.values()].filter(e => e.status === 'idle').length;
-  const done  = [...files.values()].filter(e => e.status === 'done').length;
-  document.getElementById('toolbar').classList.toggle('show', total > 0);
-  document.getElementById('toolbar-stats').innerHTML =
-    `<span>${total}</span> file &nbsp;·&nbsp; <span>${done}</span> completati`;
-  document.getElementById('btn-all').disabled = idle === 0;
+function filterModes(file) {
+  const type = getFileType(file);
+  let anyActive = false;
+  modeButtons.forEach(btn => {
+    const ok = btn.dataset.supports === 'all' || btn.dataset.supports === type;
+    btn.style.display = ok ? '' : 'none';
+    if (!ok && btn.classList.contains('active')) btn.classList.remove('active');
+    if (ok  && btn.classList.contains('active')) anyActive = true;
+  });
+  if (!anyActive) {
+    const first = [...modeButtons].find(b => b.style.display !== 'none');
+    if (first) { first.classList.add('active'); currentMode = first.dataset.mode; }
+  }
 }
 
-// ── FILE TYPE HELPERS ────────────────────────────────────────
-function getCategory(file) {
-  const t = file.type, n = file.name.toLowerCase();
-  if (t.startsWith('video/')) return 'video';
-  if (t.startsWith('audio/')) return 'audio';
-  if (t.startsWith('image/')) return 'image';
-  if (t === 'application/pdf' || n.endsWith('.pdf')) return 'pdf';
-  if (n.endsWith('.pptx')||n.endsWith('.ppt')||n.endsWith('.docx')||
-      n.endsWith('.doc') ||n.endsWith('.xlsx')||n.endsWith('.csv')) return 'doc';
-  if (n.endsWith('.zip')||n.endsWith('.rar')||n.endsWith('.7z')||
-      n.endsWith('.tar')||n.endsWith('.gz')) return 'archive';
-  return 'other';
-}
-function getLabel(file) {
-  const ext = file.name.split('.').pop().toUpperCase();
-  return ext.length <= 4 ? ext : getCategory(file).slice(0,3).toUpperCase();
-}
-function fmtSize(b) {
-  if (b < 1024)   return b + ' B';
-  if (b < 1<<20)  return (b/1024).toFixed(1) + ' KB';
-  return (b/(1<<20)).toFixed(2) + ' MB';
+function getFileType(file) {
+  if (file.type.startsWith('image/')) return 'image';
+  if (file.type.startsWith('video/')) return 'video';
+  if (file.type.startsWith('audio/')) return 'audio';
+  return 'file';
 }
 
-// ── BUILD CARD ───────────────────────────────────────────────
-function buildCard(id, file) {
-  const card = document.createElement('div');
-  card.className = 'file-card';
-  card.id = `card-${id}`;
-  const cat = getCategory(file);
-  card.innerHTML = `
-    <div class="card-head">
-      <div class="card-type-icon ${cat}">${getLabel(file)}</div>
-      <div class="card-info">
-        <div class="card-name" title="${esc(file.name)}">${esc(file.name)}</div>
-        <div class="card-meta">
-          <span>${fmtSize(file.size)}</span>
-          <span class="sep">·</span>
-          <span>${cat}</span>
-          <span class="sep">·</span>
-          <span id="status-${id}" class="s-idle">idle</span>
-        </div>
-      </div>
-      <div class="card-actions">
-        <button class="btn-analyze" id="btn-${id}" onclick="processSingle(${id})">Enhance</button>
-        <button class="btn-remove"  onclick="removeFile(${id})" title="Rimuovi">
-          <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-      </div>
-    </div>
-    <div class="card-progress" id="prog-${id}">
-      <div class="prog-track"><div class="prog-fill" id="bar-${id}"></div></div>
-      <div class="prog-label" id="plbl-${id}"></div>
-    </div>
-    <div class="card-preview" id="preview-${id}" style="display:none"></div>
-    <div class="card-analysis" id="analysis-${id}">
-      <div class="analysis-head">
-        <span class="analysis-label">Enhancement Report</span>
-        <div class="badge-row" id="badges-${id}"></div>
-      </div>
-      <div class="analysis-body">
-        <div class="analysis-summary" id="asummary-${id}"></div>
-        <div class="issues-list"     id="aissues-${id}"></div>
-        <div class="analysis-detail" id="adetail-${id}"></div>
-      </div>
-    </div>
-    <div class="card-download" id="dl-${id}">
-      <svg viewBox="0 0 24 24" width="15" height="15" stroke="#34d399" fill="none" stroke-width="2">
-        <path d="M12 16l-4-4h3V4h2v8h3l-4 4z"/><path d="M4 18h16"/>
-      </svg>
-      <a class="dl-link" id="dllink-${id}" href="#" target="_blank">—</a>
-      <button class="btn-copy" onclick="copyLink(${id})">copy</button>
-    </div>`;
-  return card;
+function formatFileSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(1) + ' MB';
 }
 
-// ── PROCESS ──────────────────────────────────────────────────
-async function processAll() {
-  const idle = [...files.entries()].filter(([,e]) => e.status === 'idle');
-  const btn  = document.getElementById('btn-all');
-  btn.disabled = true;
-  for (const [id] of idle) await processSingle(id);
-  btn.textContent = 'Tutti completati';
-  setTimeout(() => {
-    btn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> Processa tutti';
-    refreshToolbar();
-  }, 2500);
-}
+// ─── Mode selection ───────────────────────────────────────────────────────────
+modeButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    modeButtons.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentMode = btn.dataset.mode;
+  });
+});
 
-async function processSingle(id) {
-  const entry = files.get(id);
-  if (!entry || entry.status === 'processing') return;
-  entry.status = 'processing';
-  setCardStatus(id, 'processing');
-  const btn = document.getElementById(`btn-${id}`);
-  btn.disabled = true; btn.textContent = '...';
+// ─── Process button ───────────────────────────────────────────────────────────
+btnProcess.addEventListener('click', (e) => {
+  if (!REPLICATE_KEY && !GROQ_KEY) {
+    apiKeyModal.classList.add('visible');
+    showToast('Set your API keys first');
+    return;
+  }
+  const ripple = document.createElement('span');
+  ripple.className = 'ripple-el';
+  const rect = btnProcess.getBoundingClientRect();
+  ripple.style.left = (e.clientX - rect.left) + 'px';
+  ripple.style.top  = (e.clientY - rect.top)  + 'px';
+  btnProcess.appendChild(ripple);
+  setTimeout(() => ripple.remove(), 600);
+  startProcessing();
+});
+
+// ─── Main processing flow ─────────────────────────────────────────────────────
+async function startProcessing() {
+  if (!currentFile) return;
+  btnProcess.disabled    = true;
+  btnProcess.textContent = 'Processing...';
+  resultSection.classList.remove('visible');
+  progressSection.classList.add('visible');
+
+  const fileType = getFileType(currentFile);
+  const steps = [
+    'Reading file',
+    fileType === 'image' ? 'AI upscaling via Replicate' : 'Processing stream',
+    'Generating AI report',
+    'Preparing output'
+  ];
+  renderSteps(steps);
 
   try {
-    const cat = getCategory(entry.file);
+    // Step 0 — read
+    await animateStep(0, steps.length, 'Reading file...');
+    const base64Data = await readFileAsBase64(currentFile);
 
-    if (cat === 'image') {
-      await processImage(id, entry);
+    // Step 1 — enhance
+    await animateStep(1, steps.length, fileType === 'image' ? 'Sending to Replicate...' : 'Processing...');
+    let resultBlob;
+    let originalURL = null;
+
+    if (fileType === 'image') {
+      originalURL = URL.createObjectURL(currentFile);
+      if (REPLICATE_KEY) {
+        resultBlob = await enhanceWithReplicate(base64Data, currentFile.type, currentMode);
+      } else {
+        // Fallback: canvas-only if no Replicate key
+        resultBlob = await enhanceWithCanvas(currentFile, currentMode);
+        showToast('No Replicate key — using local enhancement');
+      }
     } else {
-      await processGeneric(id, entry, cat);
+      resultBlob = new Blob([await currentFile.arrayBuffer()], { type: currentFile.type });
     }
 
+    // Step 2 — AI report
+    await animateStep(2, steps.length, 'Generating report...');
+    const report = GROQ_KEY
+      ? await getGroqReport(base64Data, currentFile, currentMode)
+      : 'Add a Groq API key in settings to get an AI-generated analysis report.';
+
+    // Step 3 — done
+    await animateStep(3, steps.length, 'Done');
+    const processedURL = URL.createObjectURL(resultBlob);
+
+    setTimeout(() => {
+      progressSection.classList.remove('visible');
+      showResult(fileType, originalURL, processedURL, report);
+    }, 400);
+
   } catch (err) {
-    entry.status = 'error';
-    setCardStatus(id, 'error');
-    document.getElementById(`card-${id}`).classList.add('error');
-    setProgress(id, 0, 'errore: ' + err.message);
-    btn.disabled  = false;
-    btn.textContent = 'Riprova';
-    toast(err.message, 'red');
-    console.error('[wawe]', err);
-  }
-  refreshToolbar();
-}
-
-// ── IMAGE PROCESSING (Canvas enhancement + AI visiva) ────────
-async function processImage(id, entry) {
-  const btn = document.getElementById(`btn-${id}`);
-
-  setProgress(id, 10, 'caricamento immagine...');
-  const originalDataUrl = await fileToDataUrl(entry.file);
-
-  setProgress(id, 25, 'analisi AI visiva...');
-  const aiResult = await claudeAnalyzeImage(originalDataUrl, entry.file.name);
-
-  setProgress(id, 50, 'enhancement in corso...');
-  const enhancedBlob = await enhanceImage(originalDataUrl, aiResult.enhancements);
-
-  setProgress(id, 70, 'mostra anteprima...');
-  showImagePreview(id, originalDataUrl, enhancedBlob);
-
-  setProgress(id, 80, 'upload su gofile...');
-  const enhancedFile = new File([enhancedBlob], 'wawe-enhanced-' + entry.file.name, { type: 'image/jpeg' });
-  const url = await gofileUpload(enhancedFile);
-
-  setProgress(id, 100, 'completato');
-  showAnalysis(id, aiResult, true);
-  showDownload(id, url);
-  entry.status = 'done';
-  setCardStatus(id, 'done');
-  document.getElementById(`card-${id}`).classList.add('done');
-  btn.textContent = 'done';
-  toast('Immagine migliorata', 'green');
-}
-
-// ── CLAUDE VISION ANALYSIS ───────────────────────────────────
-async function claudeAnalyzeImage(dataUrl, filename) {
-  const base64 = dataUrl.split(',')[1];
-  const mediaType = dataUrl.split(';')[0].split(':')[1] || 'image/jpeg';
-
-  const prompt = `Sei un esperto di image enhancement. Analizza questa immagine e rispondi SOLO con JSON valido, zero markdown:
-{
-  "quality": "good|degraded|poor",
-  "summary": "descrizione concisa dei problemi visivi che vedi",
-  "issues": ["problema 1", "problema 2", "problema 3"],
-  "corrections": [{"problem": "problema trovato", "fix": "come è stato corretto"}],
-  "suggestions": "consiglio finale in italiano, max 2 righe",
-  "enhancements": {
-    "brightness": 0,
-    "contrast": 15,
-    "saturation": 10,
-    "sharpness": 20,
-    "denoise": true
+    console.error(err);
+    progressSection.classList.remove('visible');
+    showToast('Error: ' + (err.message || 'something went wrong'));
+    btnProcess.disabled    = false;
+    btnProcess.textContent = 'Enhance File';
   }
 }
 
-I valori enhancement vanno da -100 a +100 (0 = nessuna modifica). Sceglili basandoti sui problemi reali che vedi nell'immagine.
-Se l'immagine è sgranata → aumenta sharpness (20-40), abilita denoise.
-Se è scura → aumenta brightness (10-30).
-Se i colori sono spenti → aumenta saturation (10-25).
-Se è piatta → aumenta contrast (10-25).`;
+function renderSteps(steps) {
+  stepsEl.innerHTML = '';
+  steps.forEach((s, i) => {
+    const div = document.createElement('div');
+    div.className = 'step';
+    div.id = 'step-' + i;
+    div.innerHTML = `<span class="step__dot"></span><span>${s}</span>`;
+    stepsEl.appendChild(div);
+  });
+}
 
-  const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+function animateStep(index, total, label) {
+  return new Promise(resolve => {
+    if (index > 0) {
+      const prev = document.getElementById('step-' + (index - 1));
+      if (prev) { prev.classList.remove('active'); prev.classList.add('done'); }
+    }
+    const el = document.getElementById('step-' + index);
+    if (el) el.classList.add('active');
+    progressFill.style.width = Math.round(((index + 1) / total) * 100) + '%';
+    progressText.textContent  = label;
+    setTimeout(resolve, index === 1 ? 200 : 700); // step 1 resolves fast, Replicate is async
+  });
+}
+
+// ─── Replicate — Real-ESRGAN ──────────────────────────────────────────────────
+async function enhanceWithReplicate(base64, mimeType, mode) {
+  const dataUrl = `data:${mimeType};base64,${base64}`;
+
+  // Map mode → Real-ESRGAN params
+  const scale = (mode === 'hdr' || mode === 'enhance') ? 4 : 2;
+  const faceEnhance = false; // can expose as option later
+
+  // 1. Create prediction
+  const createRes = await fetch('https://api.replicate.com/v1/models/nightmareai/real-esrgan/predictions', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${GROQ_KEY}`,
-      'Content-Type': 'application/json'
+      'Authorization': `Token ${REPLICATE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'wait'               // ask Replicate to wait up to 60s synchronously
     },
     body: JSON.stringify({
-      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-      max_tokens: 600,
-      temperature: 0.1,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'image_url', image_url: { url: `data:${mediaType};base64,${base64}` } },
-          { type: 'text', text: prompt }
-        ]
-      }]
+      input: {
+        image:        dataUrl,
+        scale:        scale,
+        face_enhance: faceEnhance
+      }
     })
   });
 
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({}));
-    throw new Error(e?.error?.message || `Groq vision errore ${r.status}`);
+  if (!createRes.ok) {
+    const err = await createRes.json().catch(() => ({}));
+    if (createRes.status === 401) throw new Error('Invalid Replicate key');
+    throw new Error(err.detail || 'Replicate error ' + createRes.status);
   }
 
-  const data = await r.json();
-  const raw = data.choices?.[0]?.message?.content || '{}';
-  try {
-    return JSON.parse(raw.replace(/```[\w]*\n?|```/g, '').trim());
-  } catch {
-    return {
-      quality: 'unknown', summary: raw.slice(0,120), issues: [], suggestions: '',
-      enhancements: { brightness: 0, contrast: 10, saturation: 5, sharpness: 15, denoise: true }
-    };
+  let prediction = await createRes.json();
+
+  // 2. Poll if not done yet (fallback when "Prefer: wait" isn't honoured)
+  const maxWait = 120000; // 2 min
+  const start   = Date.now();
+  while (prediction.status !== 'succeeded' && prediction.status !== 'failed') {
+    if (Date.now() - start > maxWait) throw new Error('Replicate timeout — try again');
+    await sleep(2500);
+    progressText.textContent = 'AI upscaling... ' + Math.round((Date.now() - start) / 1000) + 's';
+    const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
+      headers: { 'Authorization': `Token ${REPLICATE_KEY}` }
+    });
+    prediction = await pollRes.json();
   }
+
+  if (prediction.status === 'failed') throw new Error('Replicate failed: ' + (prediction.error || 'unknown'));
+
+  // 3. Fetch the output image as blob
+  const outputUrl  = prediction.output;
+  const imgRes     = await fetch(outputUrl);
+  if (!imgRes.ok)  throw new Error('Could not download enhanced image');
+  return await imgRes.blob();
 }
 
-// ── CANVAS IMAGE ENHANCEMENT ─────────────────────────────────
-function enhanceImage(dataUrl, enhancements = {}) {
-  return new Promise((resolve) => {
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ─── Canvas fallback (no Replicate key) ───────────────────────────────────────
+function enhanceWithCanvas(file, mode) {
+  return new Promise((resolve, reject) => {
     const img = new Image();
+    const url = URL.createObjectURL(file);
     img.onload = () => {
+      URL.revokeObjectURL(url);
       const canvas = document.createElement('canvas');
       canvas.width  = img.naturalWidth;
       canvas.height = img.naturalHeight;
       const ctx = canvas.getContext('2d');
-
-      // Disegna immagine originale
       ctx.drawImage(img, 0, 0);
-
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = imageData.data;
+      const d = imageData.data;
 
-      const brightness  = (enhancements.brightness  || 0);
-      const contrast    = (enhancements.contrast     || 0);
-      const saturation  = (enhancements.saturation   || 0);
-      const sharpness   = (enhancements.sharpness    || 0);
-      const denoise     = (enhancements.denoise      || false);
-
-      // Fattore contrasto (0-2, 1 = neutro)
-      const contrastFactor = (259 * (contrast + 255)) / (255 * (259 - contrast));
-
-      for (let i = 0; i < data.length; i += 4) {
-        let r = data[i], g = data[i+1], b = data[i+2];
-
-        // 1. Brightness
-        r += brightness; g += brightness; b += brightness;
-
-        // 2. Contrast
-        r = contrastFactor * (r - 128) + 128;
-        g = contrastFactor * (g - 128) + 128;
-        b = contrastFactor * (b - 128) + 128;
-
-        // 3. Saturation (via HSL shift)
-        const avg = (r + g + b) / 3;
-        const sat = saturation / 100;
-        r = avg + (r - avg) * (1 + sat);
-        g = avg + (g - avg) * (1 + sat);
-        b = avg + (b - avg) * (1 + sat);
-
-        data[i]   = Math.max(0, Math.min(255, r));
-        data[i+1] = Math.max(0, Math.min(255, g));
-        data[i+2] = Math.max(0, Math.min(255, b));
+      if (mode === 'enhance') {
+        for (let i = 0; i < d.length; i += 4) {
+          d[i]   = clamp((d[i]   - 128) * 1.18 + 134);
+          d[i+1] = clamp((d[i+1] - 128) * 1.15 + 130);
+          d[i+2] = clamp((d[i+2] - 128) * 1.12 + 128);
+        }
+      } else if (mode === 'sharpen') {
+        applySharpen(d, canvas.width, canvas.height);
+      } else if (mode === 'denoise') {
+        applyDenoise(d, canvas.width, canvas.height);
+      } else if (mode === 'hdr') {
+        for (let i = 0; i < d.length; i += 4) {
+          d[i]   = clamp(Math.pow(d[i]   / 255, 0.82) * 255 * 1.14);
+          d[i+1] = clamp(Math.pow(d[i+1] / 255, 0.84) * 255 * 1.10);
+          d[i+2] = clamp(Math.pow(d[i+2] / 255, 0.86) * 255 * 1.06);
+        }
       }
 
       ctx.putImageData(imageData, 0, 0);
-
-      // 4. Sharpness (unsharp mask via filtro CSS)
-      if (sharpness > 0) {
-        const amount = sharpness / 100;
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width  = canvas.width;
-        tempCanvas.height = canvas.height;
-        const tempCtx = tempCanvas.getContext('2d');
-        tempCtx.filter = `blur(${Math.max(0.3, 1 - amount * 0.7)}px)`;
-        tempCtx.drawImage(canvas, 0, 0);
-
-        // Unsharp mask: original + (original - blurred) * amount
-        const sharpData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const blurData  = tempCtx.getImageData(0, 0, canvas.width, canvas.height);
-        for (let i = 0; i < sharpData.data.length; i += 4) {
-          sharpData.data[i]   = Math.max(0, Math.min(255, sharpData.data[i]   + (sharpData.data[i]   - blurData.data[i])   * amount));
-          sharpData.data[i+1] = Math.max(0, Math.min(255, sharpData.data[i+1] + (sharpData.data[i+1] - blurData.data[i+1]) * amount));
-          sharpData.data[i+2] = Math.max(0, Math.min(255, sharpData.data[i+2] + (sharpData.data[i+2] - blurData.data[i+2]) * amount));
-        }
-        ctx.putImageData(sharpData, 0, 0);
-      }
-
-      // 5. Denoise (blur leggero per ridurre grain)
-      if (denoise) {
-        const denoiseCanvas = document.createElement('canvas');
-        denoiseCanvas.width  = canvas.width;
-        denoiseCanvas.height = canvas.height;
-        const dCtx = denoiseCanvas.getContext('2d');
-        dCtx.filter = 'blur(0.4px)';
-        dCtx.drawImage(canvas, 0, 0);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(denoiseCanvas, 0, 0);
-      }
-
-      canvas.toBlob(resolve, 'image/jpeg', 0.93);
+      canvas.toBlob(b => resolve(b), 'image/jpeg', 0.97);
     };
-    img.src = dataUrl;
+    img.onerror = () => reject(new Error('Could not load image'));
+    img.src = url;
   });
 }
 
-// ── IMAGE PREVIEW (before/after slider) ──────────────────────
-function showImagePreview(id, originalUrl, enhancedBlob) {
-  const enhancedUrl = URL.createObjectURL(enhancedBlob);
-  const previewEl = document.getElementById(`preview-${id}`);
-  previewEl.style.display = 'block';
-  previewEl.innerHTML = `
-    <div class="preview-wrap">
-      <div class="preview-label-row">
-        <span class="preview-lbl">Originale</span>
-        <span class="preview-lbl enhanced-lbl">Migliorata ✦</span>
-      </div>
-      <div class="preview-slider-wrap" id="slider-wrap-${id}">
-        <img class="preview-img preview-original" src="${originalUrl}" alt="Originale" draggable="false"/>
-        <div class="preview-enhanced-clip" id="enhanced-clip-${id}" style="width:50%">
-          <img class="preview-img preview-enhanced" src="${enhancedUrl}" alt="Migliorata" draggable="false"/>
-        </div>
-        <div class="preview-divider" id="divider-${id}" style="left:50%"></div>
-      </div>
-      <p class="preview-hint">← trascina per confrontare →</p>
-    </div>`;
+function clamp(v) { return Math.max(0, Math.min(255, Math.round(v))); }
 
-  const wrap    = document.getElementById(`slider-wrap-${id}`);
-  const clip    = document.getElementById(`enhanced-clip-${id}`);
-  const divider = document.getElementById(`divider-${id}`);
-  let dragging  = false;
-  let rafId     = null;
+function applySharpen(d, w, h) {
+  const k = [0, -1, 0, -1, 5, -1, 0, -1, 0];
+  const c = new Uint8ClampedArray(d);
+  for (let y = 1; y < h-1; y++)
+    for (let x = 1; x < w-1; x++)
+      for (let ch = 0; ch < 3; ch++) {
+        let s = 0;
+        for (let ky = -1; ky <= 1; ky++)
+          for (let kx = -1; kx <= 1; kx++)
+            s += c[((y+ky)*w+(x+kx))*4+ch] * k[(ky+1)*3+(kx+1)];
+        d[(y*w+x)*4+ch] = clamp(s);
+      }
+}
 
-  function setSlider(clientX) {
-    const rect = wrap.getBoundingClientRect();
-    const pct  = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    if (rafId) cancelAnimationFrame(rafId);
-    rafId = requestAnimationFrame(() => {
-      clip.style.width   = (pct * 100) + '%';
-      divider.style.left = (pct * 100) + '%';
-    });
+function applyDenoise(d, w, h) {
+  const c = new Uint8ClampedArray(d);
+  for (let y = 1; y < h-1; y++)
+    for (let x = 1; x < w-1; x++)
+      for (let ch = 0; ch < 3; ch++) {
+        let s = 0;
+        for (let ky = -1; ky <= 1; ky++)
+          for (let kx = -1; kx <= 1; kx++)
+            s += c[((y+ky)*w+(x+kx))*4+ch];
+        d[(y*w+x)*4+ch] = clamp(s / 9);
+      }
+}
+
+// ─── Base64 reader ────────────────────────────────────────────────────────────
+function readFileAsBase64(file) {
+  if (!file.type.startsWith('image/')) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = () => resolve(r.result.split(',')[1]);
+    r.onerror = () => reject(new Error('File read failed'));
+    r.readAsDataURL(file);
+  });
+}
+
+// ─── Groq report ──────────────────────────────────────────────────────────────
+async function getGroqReport(base64Data, file, mode) {
+  const fileType  = getFileType(file);
+  const modeLabel = { enhance:'AI upscaling (4x Real-ESRGAN)', sharpen:'sharpening (2x Real-ESRGAN)', denoise:'noise reduction (2x Real-ESRGAN)', hdr:'HDR tone mapping (4x Real-ESRGAN)' }[mode] || mode;
+
+  let messages;
+  if (fileType === 'image' && base64Data) {
+    messages = [{
+      role: 'user',
+      content: [
+        { type: 'image_url', image_url: { url: `data:${file.type || 'image/jpeg'};base64,${base64Data}` } },
+        { type: 'text', text: `You are a professional image quality analyst. Analyze this image and write a concise enhancement report (3 short paragraphs). Processing applied: "${modeLabel}". Cover: 1) image content and original quality assessment, 2) specific improvements the AI upscaling applied, 3) recommended use cases for the enhanced version. Be specific and technical. Plain text only, no markdown.` }
+      ]
+    }];
+  } else {
+    messages = [{
+      role: 'user',
+      content: `You are a media quality analyst. Write a brief enhancement report (3 paragraphs) for a ${fileType} file: "${file.name}" (${formatFileSize(file.size)}) processed with "${modeLabel}". Cover: improvements applied, technical parameters, expected quality gain. Plain text, no markdown.`
+    }];
   }
 
-  wrap.addEventListener('mousedown', e => {
-    e.preventDefault();
-    dragging = true;
-    setSlider(e.clientX);
-  });
-
-  wrap.addEventListener('touchstart', e => {
-    dragging = true;
-    setSlider(e.touches[0].clientX);
-  }, { passive: true });
-
-  wrap.addEventListener('mousemove', e => {
-    if (!dragging) return;
-    e.preventDefault();
-    setSlider(e.clientX);
-  });
-
-  wrap.addEventListener('touchmove', e => {
-    if (!dragging) return;
-    e.stopPropagation();
-    setSlider(e.touches[0].clientX);
-  }, { passive: true });
-
-  const stop = () => { dragging = false; };
-  wrap.addEventListener('mouseup',   stop);
-  wrap.addEventListener('mouseleave', stop);
-  wrap.addEventListener('touchend',  stop);
-}
-
-// ── GENERIC PROCESSING (video/audio/docs — AI testuale + upload) ─
-async function processGeneric(id, entry, cat) {
-  const btn = document.getElementById(`btn-${id}`);
-
-  setProgress(id, 15, 'analisi AI...');
-  const analysis = await groqAnalyze(entry.file, cat);
-
-  setProgress(id, 65, 'upload su gofile...');
-  const url = await gofileUpload(entry.file);
-
-  setProgress(id, 100, 'completato');
-  showAnalysis(id, analysis, false);
-  showDownload(id, url);
-  entry.status = 'done';
-  setCardStatus(id, 'done');
-  document.getElementById(`card-${id}`).classList.add('done');
-  btn.textContent = 'done';
-  toast('File processato', 'green');
-}
-
-// ── GROQ API (testo, per file non-immagine) ───────────────────
-async function groqAnalyze(file, cat) {
-  let catPrompt = '';
-  if (cat === 'video') catPrompt = 'Per il video: valuta qualità visiva presunta, frame rate, risoluzione dal nome file, problemi audio comuni. Suggerisci strumenti per migliorarlo (HandBrake, ffmpeg, DaVinci Resolve).';
-  else if (cat === 'audio') catPrompt = 'Per l\'audio: valuta qualità presunta, bitrate, rumore di fondo probabile. Suggerisci strumenti (Audacity, Adobe Audition, ffmpeg con filtri).';
-  else if (cat === 'pdf') catPrompt = 'Per il PDF: valuta leggibilità, possibile scan qualità bassa, testo estraibile. Suggerisci miglioramenti (OCR, compressione, Adobe Acrobat).';
-  else if (cat === 'doc') catPrompt = 'Per il documento: valuta integrità, dimensione, possibili problemi di formattazione.';
-  else catPrompt = 'Valuta il file in generale.';
-
-  const sys = `Sei un esperto di file enhancement. Rispondi SOLO con JSON valido, niente markdown:
-{"quality":"good|degraded|poor","summary":"descrizione concisa del problema principale","issues":["problema 1","problema 2","problema 3"],"corrections":[{"problem":"problema trovato","fix":"come è stato o come va corretto"}],"suggestions":"consiglio finale in italiano, max 2 righe"}`;
-
-  const msg = `File: "${file.name}" | MIME: ${file.type||'sconosciuto'} | Dimensione: ${fmtSize(file.size)}\n${catPrompt}`;
-
-  const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${GROQ_KEY}`, 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type':  'application/json',
+      'Authorization': `Bearer ${GROQ_KEY}`
+    },
     body: JSON.stringify({
-      model: GROQ_MODEL, max_tokens: 400, temperature: 0.1,
-      messages: [
-        { role: 'system', content: sys },
-        { role: 'user',   content: msg }
-      ]
+      model:      fileType === 'image' ? 'llama-3.2-11b-vision-preview' : 'llama-3.3-70b-versatile',
+      max_tokens: 600,
+      messages
     })
   });
 
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({}));
-    throw new Error(e?.error?.message || `Groq errore ${r.status}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    if (res.status === 401) throw new Error('Invalid Groq key');
+    throw new Error(err.error?.message || 'Groq error ' + res.status);
   }
-  const data = await r.json();
-  const raw  = data.choices?.[0]?.message?.content || '{}';
-  try {
-    return JSON.parse(raw.replace(/```[\w]*\n?|```/g, '').trim());
-  } catch {
-    return { quality:'unknown', summary: raw.slice(0,120), issues:[], suggestions:'' };
-  }
+
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content?.trim() || 'No report generated.';
 }
 
-// ── GOFILE API ───────────────────────────────────────────────
-async function gofileUpload(file) {
-  const sr = await fetch('https://api.gofile.io/servers', { method: 'GET' });
-  if (!sr.ok) throw new Error('GoFile: server non raggiungibile');
-  const sd = await sr.json();
-  if (sd.status !== 'ok' || !sd.data?.servers?.length) {
-    throw new Error('GoFile: nessun server disponibile');
-  }
-  const server = sd.data.servers[0].name;
-
-  const form = new FormData();
-  form.append('file', file);
-
-  const ur = await fetch(`https://${server}.gofile.io/contents/uploadfile`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${GOFILE_TOKEN}` },
-    body: form
-  });
-
-  if (!ur.ok) throw new Error(`GoFile upload fallito (${ur.status})`);
-  const ud = await ur.json();
-  if (ud.status !== 'ok') throw new Error('GoFile: ' + (ud.message || 'upload fallito'));
-
-  return ud.data?.downloadPage || ud.data?.directLink || '#';
-}
-
-// ── HELPERS ──────────────────────────────────────────────────
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload  = e => resolve(e.target.result);
-    reader.onerror = () => reject(new Error('Lettura file fallita'));
-    reader.readAsDataURL(file);
-  });
-}
-
-function setProgress(id, pct, label) {
-  document.getElementById(`prog-${id}`).style.display = 'block';
-  document.getElementById(`bar-${id}`).style.width    = pct + '%';
-  document.getElementById(`plbl-${id}`).textContent   = label;
-}
-
-function setCardStatus(id, s) {
-  const el = document.getElementById(`status-${id}`);
-  if (!el) return;
-  el.textContent = s;
-  el.className   = `s-${s}`;
-}
-
-function showAnalysis(id, a, isEnhanced) {
-  document.getElementById(`analysis-${id}`).style.display = 'block';
-  const badges = [];
-  const q = a.quality || 'unknown';
-  if      (q === 'good')     badges.push(['green', isEnhanced ? 'Enhanced ✦' : 'OK']);
-  else if (q === 'degraded') badges.push(['amber', 'Migliorata ✦']);
-  else if (q === 'poor')     badges.push(['red',   'Migliorata ✦']);
-  else                       badges.push(['amber',  'Processata']);
-
-  document.getElementById(`badges-${id}`).innerHTML = badges.map(([t,l]) =>
-    `<span class="badge badge-${t}"><span class="dot"></span>${l}</span>`).join('');
-  document.getElementById(`asummary-${id}`).textContent = a.summary || '';
-
-  // Issues list
-  document.getElementById(`aissues-${id}`).innerHTML = (a.issues || []).map(i =>
-    `<div class="issue-item"><div class="issue-dot"></div><span>${esc(i)}</span></div>`).join('');
-
-  // Corrections: problema → come corretto
-  const corrections = a.corrections || [];
-  const corrEl = document.getElementById(`adetail-${id}`);
-  if (corrections.length > 0) {
-    corrEl.innerHTML = corrections.map(c =>
-      `<div class="correction-item">
-        <div class="corr-problem"><span class="corr-icon">⚠</span>${esc(c.problem || '')}</div>
-        <div class="corr-fix"><span class="corr-icon corr-ok">✓</span>${esc(c.fix || '')}</div>
-      </div>`
-    ).join('') + (a.suggestions ? `<div class="corr-suggestions">${esc(a.suggestions)}</div>` : '');
-  } else {
-    corrEl.textContent = a.suggestions || '';
-  }
-}
-
-function showDownload(id, url) {
-  const dl   = document.getElementById(`dl-${id}`);
-  const link = document.getElementById(`dllink-${id}`);
-  dl.style.display  = 'flex';
-  link.href         = url;
-  link.textContent  = url;
-}
-
-function copyLink(id) {
-  const url = document.getElementById(`dllink-${id}`).href;
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(url).then(() => toast('Link copiato', 'green'));
-  } else {
-    const ta = document.createElement('textarea');
-    ta.value = url;
-    document.body.appendChild(ta);
-    ta.select(); document.execCommand('copy');
-    document.body.removeChild(ta);
-    toast('Link copiato', 'green');
-  }
-}
-
-let _tt;
-function toast(msg, color = 'blue') {
-  const map = { green:'#34d399', blue:'#60a5fa', red:'#f87171', amber:'#fbbf24' };
-  document.getElementById('toast-dot').style.background = map[color] || map.blue;
-  document.getElementById('toast-msg').textContent = msg;
-  const t = document.getElementById('toast');
-  t.classList.add('show');
-  clearTimeout(_tt);
-  _tt = setTimeout(() => t.classList.remove('show'), 3200);
-}
-
-function esc(s) {
-  return String(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ── PWA INSTALL ──────────────────────────────────────────────
-let _dp;
-
-// Detect iOS
-const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || 
-  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches
-  || window.navigator.standalone === true;
-
-// iOS: mostra banner con istruzioni se non già installata
-if (isIOS && !isInStandaloneMode) {
-  const banner = document.getElementById('ios-install-banner');
-  if (banner) {
-    // Mostra solo se non già dismessa in questa sessione
-    if (!sessionStorage.getItem('ios-banner-dismissed')) {
-      setTimeout(() => banner.style.display = 'flex', 1500);
+// ─── Show result ──────────────────────────────────────────────────────────────
+function showResult(fileType, originalURL, processedURL, report) {
+  if (fileType === 'image' && originalURL) {
+    compareWrap.style.display = '';
+    imgBefore.src = originalURL;
+    imgAfter.src  = processedURL;
+    updateCompare(50);
+    if (!compareReady) {
+      compareReady = true;
+      compareWrap.addEventListener('mousedown', startDrag);
+      compareWrap.addEventListener('touchstart', startDrag, { passive: true });
     }
-    const closeBtn = banner.querySelector('.ios-banner-close');
-    if (closeBtn) closeBtn.addEventListener('click', () => {
-      sessionStorage.setItem('ios-banner-dismissed', '1');
-    });
+  } else {
+    compareWrap.style.display = 'none';
   }
-  // Bottone Install → mostra banner
-  document.getElementById('install-btn').classList.add('show');
-  document.getElementById('install-btn').addEventListener('click', () => {
-    const banner = document.getElementById('ios-install-banner');
-    if (banner) banner.style.display = 'flex';
-  });
-} else {
-  // Android / Desktop: usa beforeinstallprompt
-  window.addEventListener('beforeinstallprompt', e => {
-    e.preventDefault(); _dp = e;
-    document.getElementById('install-btn').classList.add('show');
-  });
-  document.getElementById('install-btn').addEventListener('click', async () => {
-    if (!_dp) return;
-    _dp.prompt();
-    const { outcome } = await _dp.userChoice;
-    if (outcome === 'accepted') document.getElementById('install-btn').classList.remove('show');
-    _dp = null;
-  });
+
+  reportText.textContent = report;
+  const ext      = fileType === 'image' ? '.png' : ('.' + currentFile.name.split('.').pop());
+  const baseName = currentFile.name.replace(/\.[^.]+$/, '');
+  btnDownload.href     = processedURL;
+  btnDownload.download = baseName + '_wawe' + ext;
+
+  resultSection.classList.add('visible');
+  btnProcess.disabled    = false;
+  btnProcess.textContent = 'Enhance File';
 }
 
-// Se già installata come PWA, nascondi il bottone
-if (isInStandaloneMode) {
-  document.getElementById('install-btn').style.display = 'none';
+// ─── Compare slider ───────────────────────────────────────────────────────────
+function startDrag(e) {
+  isDragging = true;
+  moveDrag(e);
+  window.addEventListener('mousemove', moveDrag);
+  window.addEventListener('touchmove', moveDrag, { passive: true });
+  window.addEventListener('mouseup',   endDrag);
+  window.addEventListener('touchend',  endDrag);
+}
+function moveDrag(e) {
+  if (!isDragging) return;
+  const rect   = compareWrap.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  updateCompare(Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100)));
+}
+function endDrag() {
+  isDragging = false;
+  window.removeEventListener('mousemove', moveDrag);
+  window.removeEventListener('touchmove', moveDrag);
+  window.removeEventListener('mouseup',   endDrag);
+  window.removeEventListener('touchend',  endDrag);
+}
+function updateCompare(pct) {
+  imgAfter.style.clipPath   = `inset(0 ${100 - pct}% 0 0)`;
+  compareDivider.style.left = pct + '%';
 }
 
-// ── SERVICE WORKER ───────────────────────────────────────────
+// ─── Reset ────────────────────────────────────────────────────────────────────
+btnReset.addEventListener('click', resetAll);
+function resetAll() {
+  currentFile  = null;
+  compareReady = false;
+  fileInput.value = '';
+  filePreview.classList.remove('visible');
+  optionsSection.classList.remove('visible');
+  btnProcess.classList.remove('visible');
+  progressSection.classList.remove('visible');
+  resultSection.classList.remove('visible');
+  btnProcess.disabled    = false;
+  btnProcess.textContent = 'Enhance File';
+  progressFill.style.width = '0%';
+}
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3200);
+}
+
+// ─── PWA install ──────────────────────────────────────────────────────────────
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstall = e;
+  installBanner.classList.add('visible');
+});
+installBtn.addEventListener('click', async () => {
+  if (!deferredInstall) return;
+  deferredInstall.prompt();
+  const { outcome } = await deferredInstall.userChoice;
+  if (outcome === 'accepted') { installBanner.classList.remove('visible'); showToast('WAWE installed'); }
+  deferredInstall = null;
+});
+window.addEventListener('appinstalled', () => installBanner.classList.remove('visible'));
+
+// ─── Service Worker ───────────────────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(console.error));
 }
